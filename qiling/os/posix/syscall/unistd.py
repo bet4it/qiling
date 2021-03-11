@@ -93,11 +93,31 @@ def ql_syscall_setgid(ql, *args, **kw):
 
 
 def ql_syscall_setgid32(ql, *args, **kw):
-    return 0   
+    return 0
 
 
 def ql_syscall_setuid(ql, *args, **kw):
     return 0
+
+
+def ql_syscall_fsync(ql, fsync_fd, *args, **kw):
+    try:
+        os.fsync(ql.os.fd[fsync_fd].fileno())
+        regreturn = 0
+    except:
+        regreturn = -1
+    ql.log.debug("fsync(%d) = %d" % (fsync_fd, regreturn))
+    return regreturn
+
+
+def ql_syscall_fdatasync(ql, fdatasync_fd, *args, **kw):
+    try:
+        os.fdatasync(ql.os.fd[fdatasync_fd].fileno())
+        regreturn = 0
+    except:
+        regreturn = -1
+    ql.log.debug("fdatasync(%d) = %d" % (fdatasync_fd, regreturn))
+    return regreturn
 
 
 def ql_syscall_faccessat(ql, faccessat_dfd, faccessat_filename, faccessat_mode, *args, **kw):
@@ -447,7 +467,7 @@ def ql_syscall_dup2(ql, dup2_oldfd, dup2_newfd, *args, **kw):
     return regreturn
 
 
-def ql_syscall_dup3(ql, dup3_oldfd, dup3_newfd, dup3_flags, null2, null3, null4):
+def ql_syscall_dup3(ql, dup3_oldfd, dup3_newfd, dup3_flags, *args, **kw):
     if 0 <= dup3_newfd < 256 and 0 <= dup3_oldfd < 256:
         if ql.os.fd[dup3_oldfd] != 0:
             ql.os.fd[dup3_newfd] = ql.os.fd[dup3_oldfd].dup()
@@ -462,7 +482,6 @@ def ql_syscall_set_tid_address(ql, set_tid_address_tidptr, *args, **kw):
     if ql.os.thread_management == None:
         regreturn = os.getpid()
     else:
-        ql.os.thread_management.cur_thread.set_clear_child_tid_addr(set_tid_address_tidptr)
         regreturn = ql.os.thread_management.cur_thread.id
     return regreturn
 
@@ -633,6 +652,52 @@ def ql_syscall_getdents(ql, fd, dirp, count, *args, **kw):
     ql.log.debug("getdents(%d, /* %d entries */, 0x%x) = %d" % (fd, _ent_count, count, regreturn))
     return regreturn
 
-    
+
 def ql_syscall_getdents64(ql, fd, dirp, count, *args, **kw):
-    return ql_syscall_getdents(ql, fd, dirp, count, *args, **kw)
+    # TODO: not sure what is the meaning of d_off, should not be 0x0
+    # but works for the example code from linux manual.
+    def _type_mapping(ent):
+        methods_constants_d = {'is_fifo': 0x1, 'is_char_device': 0x2, 'is_dir': 0x4, 'is_block_device': 0x6,
+                                'is_file': 0x8, 'is_symlink': 0xa, 'is_socket': 0xc}
+        ent_p = pathlib.Path(ent.path) if isinstance(ent, os.DirEntry) else ent
+
+        for method, constant in methods_constants_d.items():
+            if getattr(ent_p, method, None)():
+                t = constant
+                break
+        else:
+            t = 0x0 # DT_UNKNOWN
+
+        return bytes([t])
+
+    if ql.os.fd[fd].tell() == 0:
+        n = 8
+        total_size = 0
+        results = os.scandir(ql.os.fd[fd].name)
+        _ent_count = 0
+
+        for result in itertools.chain((pathlib.Path('.'), pathlib.Path('..')), results): # chain speical directories with the results
+            d_ino = result.inode() if isinstance(result, os.DirEntry) else result.stat().st_ino
+            d_off = 0x0
+            d_name = (result.name if isinstance(result, os.DirEntry) else result._str).encode() + b'\x00'
+            d_type = _type_mapping(result)
+            d_reclen = len(d_name) + n*2 + 3
+
+            ql.mem.write(dirp, ql.pack64(d_ino))
+            ql.mem.write(dirp+n, ql.pack64(d_off))
+            ql.mem.write(dirp+n*2, ql.pack16(d_reclen))
+            ql.mem.write(dirp+n*2+2, d_type)
+            ql.mem.write(dirp+n*2+3, d_name)
+
+            dirp += d_reclen
+            total_size += d_reclen
+            _ent_count += 1
+
+        regreturn = total_size
+        ql.os.fd[fd].lseek(0, os.SEEK_END) # mark as end of file for dir_fd
+    else:
+        _ent_count = 0
+        regreturn = 0
+
+    ql.log.debug("getdents64(%d, /* %d entries */, 0x%x) = %d" % (fd, _ent_count, count, regreturn))
+    return regreturn

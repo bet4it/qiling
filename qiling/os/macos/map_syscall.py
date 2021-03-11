@@ -178,7 +178,7 @@ syscall_table = {
     "lstat": (190, 340),
     "pathconf": (191, 191),
     "fpathconf": (192, 192),
-    "getrlimit": (194, 194),
+    "getrlimit_macos": (194, 194),
     "setrlimit": (195, 195),
     "getdirentries": (196, 196),
     "mmap2_macos": (197, 197),

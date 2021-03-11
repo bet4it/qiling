@@ -826,11 +826,6 @@ def statFamily(ql, path, ptr, name, stat_func, struct_func):
         ql.log.debug(f'{name}("{file}", {hex(ptr)}) write completed')
         return regreturn
 
-def ql_syscall_chmod(ql, filename, mode, null1, null2, null3, null4):
-    regreturn = 0
-    filename = ql.mem.string(filename)
-    ql.log.debug("chmod(%s,%d) = %d" % (filename, mode, regreturn))
-    return regreturn
 
 def ql_syscall_fstatat64(ql, fstatat64_dirfd, fstatat64_path, fstatat64_buf_ptr, fstatat64_flag, *args, **kw):
     # FIXME: dirfd(relative path) not implement.
@@ -853,6 +848,7 @@ def ql_syscall_fstatat64(ql, fstatat64_dirfd, fstatat64_path, fstatat64_buf_ptr,
 
     return regreturn
 
+
 def ql_syscall_newfstatat(ql, newfstatat_dirfd, newfstatat_path, newfstatat_buf_ptr, newfstatat_flag, *args, **kw):
     # FIXME: dirfd(relative path) not implement.
     newfstatat_path = ql.mem.string(newfstatat_path)
@@ -874,15 +870,13 @@ def ql_syscall_newfstatat(ql, newfstatat_dirfd, newfstatat_path, newfstatat_buf_
 
     return regreturn
 
-def ql_syscall_fstat64(ql, fstat64_fd, fstat64_buf_ptr, *args, **kw):
-    if ql.os.fd[fstat64_fd].fstat() == -1:
-        regreturn = 0
 
-    elif fstat64_fd < 256 and ql.os.fd[fstat64_fd] != 0:
-        user_fileno = fstat64_fd
-        fstat64_info = ql.os.fd[user_fileno].fstat()
-        fstat64_buf = pack_stat64_struct(ql, fstat64_info)
-        ql.mem.write(fstat64_buf_ptr, fstat64_buf)
+def ql_syscall_fstat64(ql, fstat64_fd, fstat64_buf_ptr, *args, **kw):
+    if fstat64_fd < 256 and ql.os.fd[fstat64_fd] != 0 and hasattr(ql.os.fd[fstat64_fd], "fstat"):
+        fstat64_info = ql.os.fd[fstat64_fd].fstat()
+        if fstat64_info != -1:
+            fstat64_buf = pack_stat64_struct(ql, fstat64_info)
+            ql.mem.write(fstat64_buf_ptr, fstat64_buf)
         regreturn = 0
     else:
         regreturn = -1
@@ -896,10 +890,10 @@ def ql_syscall_fstat64(ql, fstat64_fd, fstat64_buf_ptr, *args, **kw):
 
 def ql_syscall_fstat(ql, fstat_fd, fstat_buf_ptr, *args, **kw):
     if fstat_fd < 256 and ql.os.fd[fstat_fd] != 0 and hasattr(ql.os.fd[fstat_fd], "fstat"):
-        user_fileno = fstat_fd
-        fstat_info = ql.os.fd[user_fileno].fstat()
-        fstat_buf = pack_stat_struct(ql, fstat_info)
-        ql.mem.write(fstat_buf_ptr, fstat_buf)
+        fstat_info = ql.os.fd[fstat_fd].fstat()
+        if fstat_info != -1:
+            fstat_buf = pack_stat_struct(ql, fstat_info)
+            ql.mem.write(fstat_buf_ptr, fstat_buf)
         regreturn = 0
     else:
         regreturn = -1
@@ -933,25 +927,39 @@ def ql_syscall_mknodat(ql, dirfd, pathname, mode, dev, *args, **kw):
     # FIXME: dirfd(relative path) not implement.
     file_path = ql.mem.string(pathname)
     real_path = ql.os.path.transform_to_real_path(file_path)
-    ql.log.debug("mknodat(%d, %s, 0%o, %d)" % (dirfd, real_path, mode, dev))
     try:
         os.mknod(real_path, mode, dev)
         regreturn = 0
     except:
         regreturn = -1
+    ql.log.debug("mknodat(%d, %s, 0%o, %d) = %d" % (dirfd, real_path, mode, dev, regreturn))
     return regreturn
 
 
 def ql_syscall_mkdir(ql, pathname, mode, *args, **kw):
     file_path = ql.mem.string(pathname)
     real_path = ql.os.path.transform_to_real_path(file_path)
-    ql.log.debug("mkdir(%s, 0%o)" % (real_path, mode))
     try:
         if not os.path.exists(real_path):
             os.mkdir(real_path, mode)
         regreturn = 0
     except:
         regreturn = -1
+    ql.log.debug("mkdir(%s, 0%o) =%d" % (real_path, mode, regreturn))
+    return regreturn
+
+
+def ql_syscall_mkdirat(ql, dirfd, pathname, mode, *args, **kw):
+    # FIXME: dirfd(relative path) not implement.
+    file_path = ql.mem.string(pathname)
+    real_path = ql.os.transform_to_real_path(file_path)
+    try:
+        if not os.path.exists(real_path):
+            os.mkdir(real_path, mode)
+        regreturn = 0
+    except:
+        regreturn = -1
+    ql.log.debug("mkdirat(%d, %s, 0%o) = %d" % (dirfd, real_path, mode, regreturn))
     return regreturn
 
 
@@ -969,6 +977,28 @@ def ql_syscall_fstatfs(ql, fd, buf, *args, **kw):
     if data:
         ql.log.debug("fstatfs() CONTENT:")
         ql.log.debug(str(data))
+    return regreturn
+
+
+def ql_syscall_chmod(ql, pathname, mode, *args, **kw):
+    file_path = ql.mem.string(pathname)
+    real_path = ql.os.transform_to_real_path(file_path)
+    try:
+        os.chmod(real_path, mode)
+        regreturn = 0
+    except:
+        regreturn = -1
+    ql.log.debug("chmod(%s, %d) = %d" % (real_path, mode, regreturn))
+    return regreturn
+
+
+def ql_syscall_fchmod(ql, fd, mode, *args, **kw):
+    try:
+        os.fchmod(ql.os.fd[fd].fileno(), mode)
+        regreturn = 0
+    except:
+        regreturn = -1
+    ql.log.debug("fchmod(%d, %d) = %d" % (fd, mode, regreturn))
     return regreturn
 
 

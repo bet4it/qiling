@@ -264,7 +264,7 @@ def ql_syscall_getattrlist(ql, path, alist, attributeBuffer, bufferSize, options
 #     rlim_t	rlim_cur;		/* current (soft) limit */       uint64
 #     rlim_t	rlim_max;		/* maximum value for rlim_cur */ uint64
 # };
-def ql_syscall_getrlimit(ql, which, rlp, *args, **kw):
+def ql_syscall_getrlimit_macos(ql, which, rlp, *args, **kw):
     ql.log.debug("getrlimit(which:0x%x, rlp:0x%x)" % (which, rlp))
     _RLIMIT_POSIX_FLAG = 0x1000
     RLIM_NLIMITS = 9
